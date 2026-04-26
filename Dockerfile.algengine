@@ -1,0 +1,99 @@
+# ============================================================
+# Dockerfile.algengine
+# WorldEngine AlgEngine 環境 (E2E 学習 / RL ファインチューニング)
+# FROM: ローカルビルド済みの base イメージを継承
+#
+# 修正履歴:
+#   v1: APT / Python / PyTorch の重複を base に委譲
+#   v2: RUN 内インラインコメント (#) を削除
+#   v3: mmcv ビルド方式を修正
+#       - MMCV_WITH_OPS=1 pip install -e . → editable build が失敗
+#       ↓ 解決策
+#       - setup.py develop で Python パッケージのみビルド (GPU不要)
+#       - CUDA op は初回起動時に build_mmcv_ops.sh で後ビルド
+# ============================================================
+FROM uniad-worldengine-base:latest
+
+LABEL maintainer="UniAD+WorldEngine Pipeline"
+LABEL description="WorldEngine AlgEngine: E2E training & RL fine-tuning"
+
+# ── mmcv 1.6.2 ソースビルド ────────────────────────────────
+# Docker ビルド時は GPU がないため CUDA op は含めない。
+# Python パッケージ部分だけを setup.py develop でインストールし、
+# CUDA op は初回コンテナ起動後に build_mmcv_ops.sh で実行する。
+WORKDIR /build
+RUN git clone https://github.com/open-mmlab/mmcv.git \
+    && cd mmcv \
+    && git checkout v1.6.2
+
+WORKDIR /build/mmcv
+RUN pip install --no-cache-dir --no-build-isolation -r requirements/optional.txt
+# MMCV_WITH_OPS=0: GPU なしでも通る Python-only インストール
+RUN MMCV_WITH_OPS=0 python setup.py develop
+
+# ── OpenMMLab エコシステム ───────────────────────────────────
+RUN pip install --no-cache-dir --no-build-isolation \
+    mmcls==0.25.0 \
+    mmdet==2.25.3 \
+    mmdet3d==1.0.0rc6 \
+    mmsegmentation==0.29.1
+
+# ── WorldEngine & NAVSIM リポジトリ ─────────────────────────
+WORKDIR /workspace
+RUN git clone https://github.com/OpenDriveLab/WorldEngine.git
+RUN git clone -b v1.1 https://github.com/autonomousvision/navsim.git
+
+# ── AlgEngine 固有依存 ──────────────────────────────────────
+WORKDIR /workspace/WorldEngine/projects/AlgEngine
+RUN pip install --no-cache-dir --no-build-isolation -r requirements.txt
+RUN pip install --no-cache-dir shapely==2.0.4
+
+# ── Ray ────────────────────────────────────────────────────
+RUN pip install --no-cache-dir ray==2.9.3
+
+RUN pip install --no-cache-dir \
+    aiohttp \
+    aiohttp-cors \
+    prometheus_client \
+    opencensus
+
+# ── RL / 学習ツール ─────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    hydra-core==1.3.2 \
+    omegaconf==2.3.0 \
+    tensorboard==2.14.0 \
+    wandb \
+    pandas \
+    scikit-learn \
+    scipy \
+    tqdm
+
+# ── CUDA op 後ビルドスクリプト ──────────────────────────────
+# コンテナ初回起動後、GPU がある環境で一度だけ実行する。
+# 使い方: docker exec -it algengine build_mmcv_ops.sh
+COPY build_mmcv_ops.sh /usr/local/bin/build_mmcv_ops.sh
+RUN chmod +x /usr/local/bin/build_mmcv_ops.sh
+
+# ── ディレクトリ作成 ────────────────────────────────────────
+RUN mkdir -p \
+    /workspace/WorldEngine/data/alg_engine/ckpts \
+    /workspace/WorldEngine/data/alg_engine/merged_infos_navformer \
+    /workspace/WorldEngine/data/alg_engine/openscene-synthetic \
+    /workspace/WorldEngine/data/raw/nuplan/maps \
+    /workspace/WorldEngine/projects/AlgEngine/work_dirs \
+    /workspace/WorldEngine/projects/AlgEngine/experiments
+
+# ── 環境変数 ────────────────────────────────────────────────
+ENV WORLDENGINE_ROOT=/workspace/WorldEngine \
+    NAVSIM_DEVKIT_ROOT=/workspace/navsim \
+    ALGENGINE_ROOT=/workspace/WorldEngine/projects/AlgEngine \
+    NUPLAN_MAPS_ROOT=/workspace/WorldEngine/data/raw/nuplan/maps
+
+ENV PYTHONPATH=/workspace/WorldEngine:/workspace/WorldEngine/projects/AlgEngine:/workspace/navsim:$PYTHONPATH
+
+HEALTHCHECK --interval=60s --timeout=30s --retries=3 \
+    CMD python3 -c "import torch, mmcv, mmdet3d; print('mmcv:', mmcv.__version__)" \
+    || exit 1
+
+WORKDIR /workspace/WorldEngine/projects/AlgEngine
+CMD ["/bin/bash"]

@@ -1,0 +1,87 @@
+# ============================================================
+# Dockerfile.base
+# 3イメージ共通のベースレイヤ
+#
+# 修正履歴:
+#   v1: APT / Python 3.9 / PyTorch の重複を排除
+#   v2: torch バージョンを +cu118 サフィックス付きに統一
+#   v3: cuda-toolkit の重複インストールを削除
+#   v4: setuptools を mmcv 1.6 対応バージョン (59.5.0) に固定
+#       75.x は mmcv 1.6 の setup.py が使う pkg_resources API と非互換
+# ============================================================
+FROM nvidia/cuda:11.8.0-cudnn8-devel-ubuntu22.04
+
+LABEL maintainer="UniAD+WorldEngine Pipeline"
+LABEL description="Shared base: Ubuntu22.04 + CUDA11.8 + Python3.9 + PyTorch2.0.1"
+
+# ── システム共通パッケージ ──────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Tokyo \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    git-lfs \
+    curl \
+    wget \
+    ca-certificates \
+    ninja-build \
+    ffmpeg \
+    libgl1-mesa-glx \
+    libgl1-mesa-dri \
+    libgles2-mesa-dev \
+    libegl1-mesa-dev \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libgeos-dev \
+    libffi-dev \
+    gcc-11 \
+    g++-11 \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 60 \
+    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 60 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python 3.9 (deadsnakes PPA) ────────────────────────────
+RUN apt-get update && apt-get install -y software-properties-common \
+    && add-apt-repository ppa:deadsnakes/ppa -y \
+    && apt-get update && apt-get install -y --no-install-recommends \
+    python3.9 \
+    python3.9-dev \
+    python3.9-distutils \
+    python3.9-venv \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -sS https://bootstrap.pypa.io/get-pip.py | python3.9 \
+    && ln -sf /usr/bin/python3.9 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.9 /usr/local/bin/python \
+    && ln -sf /usr/local/bin/pip  /usr/local/bin/pip3
+    
+# ── setuptools バージョン固定 ───────────────────────────────
+# mmcv 1.6 の setup.py は setuptools 59.x までを想定している。
+# 60.x 以降は distutils の内部 API が変わり setup.py develop が失敗する。
+# gsplat (simengine) も 59.x で動作確認済み。
+RUN pip install --no-cache-dir \
+    "setuptools==59.5.0" \
+    wheel \
+    pip
+
+# ── PyTorch 2.0.1+cu118 ────────────────────────────────────
+RUN pip install --no-cache-dir \
+    torch==2.0.1+cu118 \
+    torchvision==0.15.2+cu118 \
+    torchaudio==2.0.2+cu118 \
+    --index-url https://download.pytorch.org/whl/cu118
+
+# ── 共通環境変数 ────────────────────────────────────────────
+ENV CUDA_HOME=/usr/local/cuda \
+    TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6;8.9;9.0"
+
+WORKDIR /workspace

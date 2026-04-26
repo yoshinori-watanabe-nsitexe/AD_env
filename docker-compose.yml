@@ -1,0 +1,238 @@
+# ============================================================
+# docker-compose.yml
+# UniAD v2.0 + WorldEngine (SimEngine + AlgEngine) 統合環境
+#
+# 使い方:
+#   docker compose up -d algengine          # AlgEngine のみ起動
+#   docker compose up -d simengine-head     # SimEngine Ray HEAD 起動
+#   docker compose up -d simengine-worker   # Ray WORKER 追加
+#   docker compose up -d uniad2             # UniAD 事前学習
+#   docker compose run --rm algengine bash  # インタラクティブシェル
+# ============================================================
+version: "3.9"
+
+# ── 共有ボリューム ───────────────────────────────────────────
+volumes:
+  # nuScenes / nuPlan 生データ (ホストマウント推奨)
+  data_raw:
+    driver: local
+  # AlgEngine 処理済みデータ (pkl, infos, ckpts)
+  data_alg:
+    driver: local
+  # SimEngine シーン再構成 (3DGS assets)
+  data_sim:
+    driver: local
+  # 学習ログ・チェックポイント
+  work_dirs:
+    driver: local
+  # TensorBoard / W&B ログ
+  logs:
+    driver: local
+
+# ── 共通設定 (YAML anchor) ──────────────────────────────────
+x-gpu-base: &gpu-base
+  runtime: nvidia
+  environment:
+    - NVIDIA_VISIBLE_DEVICES=all
+    - NVIDIA_DRIVER_CAPABILITIES=compute,utility,graphics
+  shm_size: "32g"    # BEV 特徴量の共有メモリ
+  ulimits:
+    memlock: -1
+    stack: 67108864
+
+x-common-volumes: &common-volumes
+  - ${HOST_DATA_ROOT:-./data}/nuscenes:/workspace/WorldEngine/data/raw/nuscenes:ro
+  - ${HOST_DATA_ROOT:-./data}/nuplan:/workspace/WorldEngine/data/raw/nuplan:ro
+  - data_alg:/workspace/WorldEngine/data/alg_engine
+  - data_sim:/workspace/WorldEngine/data/sim_engine
+  - work_dirs:/workspace/WorldEngine/projects/AlgEngine/work_dirs
+  - logs:/workspace/WorldEngine/logs
+  # ckpts はホストからマウントして共有
+  - ${HOST_CKPT_DIR:-./ckpts}:/workspace/WorldEngine/data/alg_engine/ckpts
+
+# ── サービス定義 ─────────────────────────────────────────────
+services:
+
+  # ----------------------------------------------------------
+  # 1) UniAD v2.0 事前学習コンテナ
+  # ----------------------------------------------------------
+  uniad2:
+    <<: *gpu-base
+    build:
+      context: .
+      dockerfile: Dockerfile.uniad2
+      args:
+        DOWNLOAD_CKPTS: "0"   # "1" にするとビルド時に重みをDL
+    image: uniad2:latest
+    container_name: uniad2
+    hostname: uniad2
+    volumes:
+      - ${HOST_DATA_ROOT:-./data}/nuscenes:/workspace/UniAD/data/nuscenes:ro
+      - ${HOST_CKPT_DIR:-./ckpts}/uniad:/workspace/UniAD/ckpts
+      - work_dirs:/workspace/UniAD/work_dirs
+      - logs:/workspace/UniAD/logs
+      - ./projects:/workspace/UniAD/projects_custom  # カスタムコード
+    environment:
+      - CUDA_VISIBLE_DEVICES=${UNIAD_GPUS:-0,1,2,3,4,5,6,7}
+      - MASTER_ADDR=${MASTER_ADDR:-localhost}
+      - MASTER_PORT=${MASTER_PORT:-29500}
+    ipc: host
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    command: >
+      bash -c "
+        echo 'UniAD v2.0 container ready.';
+        echo 'Run: ./tools/dist_train.sh projects/configs/stage2_e2e/base_e2e.py 8';
+        /bin/bash
+      "
+
+  # ----------------------------------------------------------
+  # 2) AlgEngine — E2E 学習 & RL ファインチューニング
+  # ----------------------------------------------------------
+  algengine:
+    <<: *gpu-base
+    build:
+      context: .
+      dockerfile: Dockerfile.algengine
+    image: algengine:latest
+    container_name: algengine
+    hostname: algengine
+    volumes:
+      *common-volumes
+    environment:
+      - CUDA_VISIBLE_DEVICES=${ALGE_GPUS:-0,1,2,3,4,5,6,7}
+      - MASTER_ADDR=${MASTER_ADDR:-localhost}
+      - MASTER_PORT=${MASTER_PORT:-29501}
+      - WORLDENGINE_ROOT=/workspace/WorldEngine
+      - NAVSIM_DEVKIT_ROOT=/workspace/navsim
+      - ALGENGINE_ROOT=/workspace/WorldEngine/projects/AlgEngine
+      - NUPLAN_MAPS_ROOT=/workspace/WorldEngine/data/raw/nuplan/maps
+      # W&B ロギング (任意)
+      - WANDB_API_KEY=${WANDB_API_KEY:-}
+      - WANDB_PROJECT=${WANDB_PROJECT:-uniad-worldengine}
+    ipc: host
+    network_mode: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    working_dir: /workspace/WorldEngine/projects/AlgEngine
+    command: /bin/bash
+
+  # ----------------------------------------------------------
+  # 3) SimEngine HEAD — Ray クラスタの親ノード
+  #    閉ループシミュレーション & 3DGS レンダリング
+  # ----------------------------------------------------------
+  simengine-head:
+    <<: *gpu-base
+    build:
+      context: .
+      dockerfile: Dockerfile.simengine
+    image: simengine:latest
+    container_name: simengine-head
+    hostname: simengine-head
+    volumes:
+      *common-volumes
+    environment:
+      - CUDA_VISIBLE_DEVICES=${SIME_GPUS:-4,5,6,7}
+      - RAY_MODE=head
+      - RAY_NUM_GPUS=4
+      - RAY_DASHBOARD_PORT=8265
+      - RAY_REDIS_PORT=6379
+      - WORLDENGINE_ROOT=/workspace/WorldEngine
+      - NAVSIM_DEVKIT_ROOT=/workspace/navsim
+      - SIMENGINE_ROOT=/workspace/WorldEngine/projects/SimEngine
+      - NUPLAN_MAPS_ROOT=/workspace/WorldEngine/data/raw/nuplan/maps
+      - PYOPENGL_PLATFORM=egl
+      - EGL_DEVICE_ID=0
+    ports:
+      - "8265:8265"   # Ray Dashboard
+      - "6379:6379"   # Ray Redis
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    working_dir: /workspace/WorldEngine/projects/SimEngine
+
+  # ----------------------------------------------------------
+  # 4) SimEngine WORKER — 追加レンダリングノード (スケール用)
+  # ----------------------------------------------------------
+  simengine-worker:
+    <<: *gpu-base
+    image: simengine:latest   # head と同じイメージを使用
+    hostname: simengine-worker
+    volumes:
+      *common-volumes
+    environment:
+      - CUDA_VISIBLE_DEVICES=all
+      - RAY_MODE=worker
+      - RAY_HEAD_ADDR=simengine-head
+      - RAY_NUM_GPUS=4
+      - WORLDENGINE_ROOT=/workspace/WorldEngine
+      - NUPLAN_MAPS_ROOT=/workspace/WorldEngine/data/raw/nuplan/maps
+      - PYOPENGL_PLATFORM=egl
+    depends_on:
+      - simengine-head
+    ipc: host
+    deploy:
+      replicas: 0       # デフォルト 0: 必要時に scale up
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    working_dir: /workspace/WorldEngine/projects/SimEngine
+
+  # ----------------------------------------------------------
+  # 5) TensorBoard (学習モニタリング)
+  # ----------------------------------------------------------
+  tensorboard:
+    image: tensorflow/tensorflow:2.14.0
+    container_name: tensorboard
+    volumes:
+      - work_dirs:/workspace/work_dirs:ro
+      - logs:/workspace/logs:ro
+    ports:
+      - "6006:6006"
+    command: >
+      tensorboard
+        --logdir /workspace/work_dirs
+        --host 0.0.0.0
+        --port 6006
+        --reload_interval 30
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: "4g"
+
+  # ----------------------------------------------------------
+  # 6) Ray Dashboard プロキシ (外部アクセス用, オプション)
+  # ----------------------------------------------------------
+  ray-dashboard-proxy:
+    image: nginx:alpine
+    container_name: ray-dashboard-proxy
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx-ray.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - simengine-head
+    restart: unless-stopped
+    profiles:
+      - monitoring   # docker compose --profile monitoring up で起動
