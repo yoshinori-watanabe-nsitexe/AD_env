@@ -1,0 +1,27 @@
+# Cloud Build 設定
+#
+# 使用方法:
+#   gcloud builds submit --config cloudbuild.yaml --substitutions="_SUF=vla-eval"
+#
+# イメージタグ: asia-northeast1-docker.pkg.dev/${PROJECT_ID}/${_SUF}/trainer:latest
+
+substitutions:
+  _SUF: "vla-eval"
+
+steps:
+  # Step 1: Docker イメージをビルド
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'build'
+      - '-t'
+      - 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/${_SUF}/trainer:latest'
+      - '.'
+
+  # Step 2: Artifact Registry にプッシュ
+  - name: 'gcr.io/cloud-builders/docker'
+    args:
+      - 'push'
+      - 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/${_SUF}/trainer:latest'
+
+images:
+  - 'asia-northeast1-docker.pkg.dev/$PROJECT_ID/${_SUF}/trainer:latest'

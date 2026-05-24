@@ -1,0 +1,40 @@
+# Vertex AI カスタムジョブ設定
+# GCP_template/setting.yaml.template の構造を踏襲
+#
+# 変数 (run_full.sh で envsubst により置換):
+#   ${IMAGE}    : Artifact Registry のイメージ URI
+#   ${BUCKET}   : GCS バケット URI (gs://...)
+#   ${JOB_NAME} : ジョブ名 (タイムスタンプ付き)
+#
+# GPU 選択ガイド:
+#   モックモデル評価 (--scale base/tiny):
+#     machineType: n1-standard-8, acceleratorType: NVIDIA_TESLA_T4, acceleratorCount: 1
+#   本番 Alpamayo-R1-10B (nvidia/Alpamayo-R1-10B, 24GB VRAM 必須):
+#     machineType: a2-highgpu-1g, acceleratorType: NVIDIA_TESLA_A100, acceleratorCount: 1
+#   本番 + 蒸留 (Teacher 32B + Student 4B の同時実行):
+#     machineType: a2-highgpu-2g, acceleratorType: NVIDIA_TESLA_A100, acceleratorCount: 2
+
+workerPoolSpecs:
+  - machineSpec:
+      machineType: n1-standard-8
+      acceleratorType: NVIDIA_TESLA_A100
+      acceleratorCount: 1
+    replicaCount: 1
+    containerSpec:
+      imageUri: ${IMAGE}
+      env:
+        # Vertex AI が自動設定する出力先 (GCS)
+        - name: AIP_MODEL_DIR
+          value: ${BUCKET}/results/${JOB_NAME}
+        # 評価パラメータ
+        - name: VLA_SAMPLES
+          value: "200"
+        - name: VLA_BATCH
+          value: "16"
+        - name: VLA_SCALE
+          value: "base"
+        # 蒸留・LoRA を有効にする場合は "0"、スキップは "1"
+        - name: VLA_NO_DISTILL
+          value: "0"
+        - name: VLA_NO_LORA
+          value: "0"

@@ -1,0 +1,110 @@
+[
+  {
+    "method": "baseline_fp32",
+    "metrics": {
+      "planning_l2": 1.0673522874712944,
+      "heading_error_rad": 0.1691126488149166,
+      "final_waypoint_l2": 1.8783586621284485,
+      "offroad_rate": 0.0,
+      "near_miss_rate": 0.0,
+      "action_accuracy": 0.09375,
+      "latency_ms_per_sample": 85.37248942187148,
+      "latency_p95_ms": 87.22968860623865
+    },
+    "info": {
+      "memory_mb": 21.31456756591797,
+      "total": 5587486,
+      "trainable": 5587486
+    }
+  },
+  {
+    "method": "int8_dynamic",
+    "metrics": {
+      "planning_l2": 1.067264512181282,
+      "heading_error_rad": 0.1716135162860155,
+      "final_waypoint_l2": 1.8826348930597305,
+      "offroad_rate": 0.0,
+      "near_miss_rate": 0.0,
+      "action_accuracy": 0.09375,
+      "latency_ms_per_sample": 68.16546084375119,
+      "latency_p95_ms": 72.08714033749786
+    },
+    "info": {
+      "memory_mb": 1.970703125,
+      "total": 516608,
+      "trainable": 516608
+    }
+  },
+  {
+    "method": "fp16",
+    "metrics": {
+      "planning_l2": 1.0662223398685455,
+      "heading_error_rad": 0.17088901344686747,
+      "final_waypoint_l2": 1.8808668404817581,
+      "offroad_rate": 0.0,
+      "near_miss_rate": 0.0,
+      "action_accuracy": 0.09375,
+      "latency_ms_per_sample": 84.20965099999833,
+      "latency_p95_ms": 87.5923922937524
+    },
+    "info": {
+      "memory_mb": 21.31456756591797,
+      "total": 5587486,
+      "trainable": 5587486
+    }
+  },
+  {
+    "method": "distilled_student",
+    "metrics": {
+      "planning_l2": 0.907955102622509,
+      "heading_error_rad": 0.18712078779935837,
+      "final_waypoint_l2": 1.620112955570221,
+      "offroad_rate": 0.0,
+      "near_miss_rate": 0.0,
+      "action_accuracy": 0.109375,
+      "latency_ms_per_sample": 1.3691018906243357,
+      "latency_p95_ms": 1.4367795812482598
+    },
+    "info": {
+      "memory_mb": 1.1065597534179688,
+      "total": 290078,
+      "trainable": 290078
+    }
+  },
+  {
+    "method": "lora_r8",
+    "metrics": {
+      "planning_l2": 1.0377904549241066,
+      "heading_error_rad": 0.16637164214625955,
+      "final_waypoint_l2": 1.8106413781642914,
+      "offroad_rate": 0.0,
+      "near_miss_rate": 0.0,
+      "action_accuracy": 0.09375,
+      "latency_ms_per_sample": 71.16808490624749,
+      "latency_p95_ms": 74.84016653749777
+    },
+    "info": {
+      "memory_mb": 21.56456756591797,
+      "total": 5653022,
+      "trainable": 65536
+    }
+  },
+  {
+    "method": "lora_r8_int8",
+    "metrics": {
+      "planning_l2": 1.038588970899582,
+      "heading_error_rad": 0.1664580898359418,
+      "final_waypoint_l2": 1.8109087646007538,
+      "offroad_rate": 0.0,
+      "near_miss_rate": 0.0,
+      "action_accuracy": 0.09375,
+      "latency_ms_per_sample": 49.62997351562137,
+      "latency_p95_ms": 50.559480299993
+    },
+    "info": {
+      "memory_mb": 1.970703125,
+      "total": 516608,
+      "trainable": 0
+    }
+  }
+]
