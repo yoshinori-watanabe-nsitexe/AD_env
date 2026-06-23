@@ -197,8 +197,47 @@ services:
               capabilities: [gpu]
     working_dir: /workspace/WorldEngine/projects/SimEngine
 
+
   # ----------------------------------------------------------
-  # 5) TensorBoard (学習モニタリング)
+  # 5) VAD コンテナ (独立した依存スタック)
+  #    Python 3.8 / CUDA 11.1 / PyTorch 1.9.1 / mmcv 1.4.0
+  #    UniAD イメージとは完全に独立したイメージを使用
+  # ----------------------------------------------------------
+  vad:
+    build:
+      context: .
+      dockerfile: Dockerfile.vad
+    image: vad:latest
+    container_name: vad
+    hostname: vad
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=${VAD_GPUS:-0}
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    shm_size: "16g"
+    volumes:
+      # nuScenes (UniAD と共有可能)
+      - ${HOST_DATA_ROOT:-./data}/nuscenes:/workspace/VAD/data/nuscenes:ro
+      # チェックポイント
+      - ${HOST_CKPT_DIR:-./ckpts}/vad:/workspace/VAD/ckpts
+      # 評価結果
+      - ${HOST_EVAL_OUT:-./eval_results}/vad:/workspace/VAD/eval_results
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1       # VAD 評価は必ず 1 GPU で実行
+              capabilities: [gpu]
+    working_dir: /workspace/VAD
+    command: /bin/bash
+
+  # ----------------------------------------------------------
+  # 6) TensorBoard (学習モニタリング)
   # ----------------------------------------------------------
   tensorboard:
     image: tensorflow/tensorflow:2.14.0

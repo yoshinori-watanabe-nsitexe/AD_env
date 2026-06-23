@@ -1,0 +1,140 @@
+# ============================================================
+# Dockerfile.vad
+# VAD (Vectorized Autonomous Driving) v1 / v2 環境
+# ICCV 2023 / ICLR 2026
+#
+# 重要: VAD は UniAD と依存スタックが完全に異なる
+#   VAD  : Python 3.8 / CUDA 11.1 / PyTorch 1.9.1 / mmcv 1.4.0
+#   UniAD: Python 3.9 / CUDA 11.8 / PyTorch 2.0.1 / mmcv 1.6.2
+# → 独立したイメージ・コンテナとして運用する
+#
+# Dockerfile.base とは別の FROM を使用する
+# (base は CUDA 11.8 のため VAD の依存を満たせない)
+# ============================================================
+FROM nvidia/cuda:11.1.1-cudnn8-devel-ubuntu20.04
+
+LABEL maintainer="UniAD+WorldEngine Pipeline"
+LABEL description="VAD v1/v2: Vectorized Autonomous Driving (ICCV2023/ICLR2026)"
+
+# ── システム依存 ────────────────────────────────────────────
+ENV DEBIAN_FRONTEND=noninteractive \
+    TZ=Asia/Tokyo \
+    LANG=C.UTF-8 \
+    LC_ALL=C.UTF-8
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    git \
+    git-lfs \
+    curl \
+    wget \
+    ca-certificates \
+    ninja-build \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    libgeos-dev \
+    gcc-9 \
+    g++-9 \
+    && update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 60 \
+    && update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 60 \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python 3.8 ──────────────────────────────────────────────
+# Ubuntu 20.04 は Python 3.8 をデフォルトで持つ
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3.8 \
+    python3.8-dev \
+    python3.8-distutils \
+    python3-pip \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN ln -sf /usr/bin/python3.8 /usr/local/bin/python3 \
+    && ln -sf /usr/bin/python3.8 /usr/local/bin/python \
+    && pip3 install --upgrade pip
+
+# setuptools: VAD の setup.py と mmdet3d v0.17.1 に対応するバージョン
+RUN pip install --no-cache-dir "setuptools==59.5.0" wheel
+
+# ── PyTorch 1.9.1 + CUDA 11.1 ──────────────────────────────
+RUN pip install --no-cache-dir \
+    torch==1.9.1+cu111 \
+    torchvision==0.10.1+cu111 \
+    torchaudio==0.9.1 \
+    -f https://download.pytorch.org/whl/torch_stable.html
+
+# ── mmcv-full 1.4.0 ─────────────────────────────────────────
+# VAD は mmcv 1.4.0 を要求する (1.5+ では動作しない)
+RUN pip install --no-cache-dir \
+    mmcv-full==1.4.0 \
+    -f https://download.openmmlab.com/mmcv/dist/cu111/torch1.9.0/index.html
+
+# ── mmdet / mmseg ───────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    mmdet==2.14.0 \
+    mmsegmentation==0.14.1
+
+# ── mmdet3d v0.17.1 (ソースビルド) ──────────────────────────
+# VAD は mmdet3d v0.17.1 のカスタムオペレーターを必要とする
+WORKDIR /build
+RUN git clone https://github.com/open-mmlab/mmdetection3d.git \
+    && cd mmdetection3d \
+    && git checkout -f v0.17.1
+
+WORKDIR /build/mmdetection3d
+RUN pip install --no-cache-dir --no-build-isolation -v -e .
+
+# ── timm (VAD の Vision Transformer 依存) ───────────────────
+RUN pip install --no-cache-dir timm
+
+# ── nuScenes devkit ─────────────────────────────────────────
+RUN pip install --no-cache-dir \
+    nuscenes-devkit==1.1.9 \
+    pyquaternion \
+    shapely==1.8.5 \
+    networkx \
+    scikit-image
+
+# ── VAD リポジトリ ───────────────────────────────────────────
+WORKDIR /workspace
+RUN git clone https://github.com/hustvl/VAD.git
+
+# ── 事前学習済みバックボーン (ResNet-50) ─────────────────────
+WORKDIR /workspace/VAD
+RUN mkdir -p ckpts && \
+    wget -q -P ckpts \
+    https://download.pytorch.org/models/resnet50-19c8e357.pth
+
+# ── 追加依存 (requirements.txt) ──────────────────────────────
+RUN pip install --no-cache-dir \
+    yapf==0.40.1 \
+    einops \
+    pandas \
+    matplotlib \
+    opencv-python-headless==4.8.1.78
+
+# ── ディレクトリ作成 ────────────────────────────────────────
+RUN mkdir -p \
+    /workspace/VAD/ckpts \
+    /workspace/VAD/data/nuscenes \
+    /workspace/VAD/data/infos \
+    /workspace/VAD/work_dirs \
+    /workspace/VAD/eval_results
+
+# ── 環境変数 ────────────────────────────────────────────────
+ENV CUDA_HOME=/usr/local/cuda \
+    TORCH_CUDA_ARCH_LIST="7.0;7.5;8.0;8.6" \
+    PYTHONPATH=/workspace/VAD:/workspace/VAD/projects:$PYTHONPATH
+
+HEALTHCHECK --interval=60s --timeout=30s --retries=3 \
+    CMD python3 -c "import torch, mmdet3d; assert torch.cuda.is_available(); print('VAD env OK')" \
+    || exit 1
+
+WORKDIR /workspace/VAD
+CMD ["/bin/bash"]
