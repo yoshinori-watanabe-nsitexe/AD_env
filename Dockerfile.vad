@@ -60,7 +60,9 @@ RUN ln -sf /usr/bin/python3.8 /usr/local/bin/python3 \
     && pip3 install --upgrade pip
 
 # setuptools: VAD の setup.py と mmdet3d v0.17.1 に対応するバージョン
-RUN pip install --no-cache-dir "setuptools==59.5.0" wheel
+# numpy: mmdet3d v0.17.1 / numba 0.48 は numpy<1.20 を要求する
+#   (numpy>=1.20 では Cython/C 拡張のビルドが失敗するため固定する)
+RUN pip install --no-cache-dir "setuptools==59.5.0" wheel "numpy==1.19.5" Cython
 
 # ── PyTorch 1.9.1 + CUDA 11.1 ──────────────────────────────
 RUN pip install --no-cache-dir \
@@ -88,7 +90,11 @@ RUN git clone https://github.com/open-mmlab/mmdetection3d.git \
     && git checkout -f v0.17.1
 
 WORKDIR /build/mmdetection3d
-RUN pip install --no-cache-dir --no-build-isolation -v -e .
+# ビルド直前に numpy を固定し直す
+#   (torch / mmcv / mmdet のインストールで numpy が更新される場合があり、
+#    numpy>=1.20 だと mmdet3d v0.17.1 の拡張ビルドが失敗するため)
+RUN pip install --no-cache-dir "numpy==1.19.5" \
+    && pip install --no-cache-dir --no-build-isolation -v -e .
 
 # ── timm (VAD の Vision Transformer 依存) ───────────────────
 RUN pip install --no-cache-dir timm
